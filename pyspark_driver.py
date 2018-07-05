@@ -6,21 +6,22 @@ import logging
 import multiprocessing
 import threading
 
+BATCH_SIZE = 100
 
 def train(ps_hosts, worker_hosts, idx, partition, job_name):
-    logging.debug("****** Start to train the model")
-
     pool = multiprocessing.Pool(processes=1)
     if job_name == "ps":
-        #pool.apply_async(linear_regression.distributed_train, (ps_hosts, worker_hosts, "ps", idx, None, None))
-        linear_regression.distributed_train(ps_hosts, worker_hosts, "ps", idx, None, None)
+        pool.apply_async(linear_regression.distributed_train, (ps_hosts, worker_hosts, "ps", idx, None, None))
+        #linear_regression.distributed_train(ps_hosts, worker_hosts, "ps", idx, None, None)
+        pool.close()
+        #pool.join()
     else:
         X, Y = get_train_X_Y(partition)
-        #pool.apply_async(linear_regression.distributed_train, (ps_hosts, worker_hosts, "worker", idx, X, Y))
-        linear_regression.distributed_train(ps_hosts, worker_hosts, "worker", idx, X, Y)
-    pool.close()
-    pool.join()
-    return ["Task # %d done".format(idx)]
+        pool.apply_async(linear_regression.distributed_train, (ps_hosts, worker_hosts, "worker", idx, X, Y))
+        #linear_regression.distributed_train(ps_hosts, worker_hosts, "worker", idx, X, Y)
+        pool.close()
+        #pool.join()
+    return ["job #{} - task #{} is submitted".format(job_name, idx)]
 
 
 def train_test(pool, ps_hosts, worker_hosts, task_index):
@@ -47,7 +48,7 @@ def train_pyspark(ps_hosts, worker_hosts, task_index):
     return ["TF %d task finished".format(task_index)]
 
 
-def pyspark_test():
+def pyspark_local_test():
     ps_hosts = ["localhost:30000"]
     worker_hosts = ["localhost:30001", "localhost:30002"]
 
@@ -55,16 +56,20 @@ def pyspark_test():
     sc = spark.sparkContext
     sc.setLogLevel("INFO")
 
-    worker_rdd = sc.parallelize(np.random.random(1000)*100, len(worker_hosts)).map(lambda x: (x, x * 0.68 + 1.2))
+    worker_rdd = sc.parallelize(np.random.rand(100*len(worker_hosts)).astype(np.float32), len(worker_hosts)).map(lambda x: (x, x * 0.68 + 1.2))
     ps_rdd = sc.parallelize(ps_hosts, len(ps_hosts))
 
     ps_rdd.mapPartitionsWithIndex(lambda idx, it: train(ps_hosts, worker_hosts, idx, it, "ps")).count()
     worker_rdd.mapPartitionsWithIndex(lambda idx, it: train(ps_hosts, worker_hosts, idx, it, "worker")).count()
 
+def pyspark_cluster_test(sc, ps_hosts, worker_hosts):
+    worker_rdd = sc.parallelize(np.random.rand(100 * 30000).astype(np.float32),
+                                len(worker_hosts))\
+        .map(lambda x: (x, x * 0.68 + 1.2))
+    ps_rdd = sc.parallelize(ps_hosts, len(ps_hosts))
 
-    #rdd = sc.parallelize(range(0,3), 3).mapPartitionsWithIndex(lambda idx, it: train_pyspark(ps_hosts, worker_hosts, idx))
-    #rdd.count()
-
+    ps_rdd.mapPartitionsWithIndex(lambda idx, it: train(ps_hosts, worker_hosts, idx, it, "ps")).count()
+    worker_rdd.mapPartitionsWithIndex(lambda idx, it: train(ps_hosts, worker_hosts, idx, it, "worker")).count()
 
 def local_test():
     ps_hosts = ["localhost:30000"]
@@ -83,5 +88,5 @@ def local_test():
 
 if __name__ == "__main__":
     #local_test()
-    pyspark_test()
+    pyspark_local_test()
 
